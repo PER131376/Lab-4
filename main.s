@@ -1,0 +1,198 @@
+; Archivo:	main.s
+; Dispositivo:	PIC16F887
+; Autor:	Selvin Peralta 
+; Compilador:	pic-as (v2.30), MPLABX V5.40
+;                
+; Programa:	TM0 y Tablas para Display 
+; Hardware:	LEDs en el puerto A, push en RB0
+;                       
+; Creado: 16 feb, 2021
+; Última modificación: 20 feb, 2021
+
+
+PROCESSOR 16F887
+#include <xc.inc>
+
+; configuración word1
+ CONFIG FOSC=INTRC_NOCLKOUT //Oscilador interno sin salidas
+ CONFIG WDTE=OFF	    //WDT disabled (reinicio repetitivo del pic)
+ CONFIG PWRTE=ON	    //PWRT enabled (espera de 72ms al iniciar
+ CONFIG MCLRE=OFF	    //pin MCLR se utiliza como I/O
+ CONFIG CP=OFF		    //sin protección de código
+ CONFIG CPD=OFF		    //sin protección de datos
+ 
+ CONFIG BOREN=OFF	    //sin reinicio cuando el voltaje baja de 4v
+ CONFIG IESO=OFF	    //Reinicio sin cambio de reloj de interno a externo
+ CONFIG FCMEN=OFF	    //Cambio de reloj externo a interno en caso de falla
+ CONFIG LVP=ON		    //Programación en bajo voltaje permitida
+ 
+;configuración word2
+  CONFIG WRT=OFF	//Protección de autoescritura 
+  CONFIG BOR4V=BOR40V	//Reinicio abajo de 4V 
+
+ UP	EQU 0
+ DOWN	EQU 7	
+;reiniciar_Tmr0 macro
+    ;banksel TMR0
+    ;movlw   61
+    ;movwf   TMR0
+    ;bcf	    T0IF
+    ;endm
+    
+  PSECT udata_bank0 ;common memory
+    cont:	DS  2 ;2 byte apartado
+    
+  PSECT udata_shr ;common memory
+    w_temp:	DS  1;1 byte apartado
+    STATUS_TEMP:DS  1;1 byte
+  
+  PSECT resVect, class=CODE, abs, delta=2
+  ;----------------------vector reset------------------------
+  ORG 00h	;posición 000h para el reset
+  resetVec:
+    PAGESEL main
+    goto main
+    
+  PSECT intVect, class=CODE, abs, delta=2
+  ;----------------------interripción reset------------------------
+  ORG 04h	;posición 0004h para interr
+  push:
+    movf    w_temp
+    swapf   STATUS, W
+    movwf   STATUS_TEMP
+  isr:
+    btfsc   RBIF
+    call    int_ioCB
+    
+    ;btfsc   T0IF
+    ;call    Interr_Tmr0
+  pop:
+    swapf   STATUS_TEMP, W
+    movwf   STATUS
+    swapf   w_temp, F
+    swapf   w_temp, W
+    retfie
+;---------SubrutinasInterrupción-----------
+int_ioCB:
+    banksel PORTB
+    btfss   PORTB, UP
+    incf    PORTA
+    btfss   PORTB, DOWN
+    decf    PORTA
+    bcf	    RBIF
+    return
+  ;Interr_Tmr0:
+    ;reiniciar_Tmr0	;50 ms
+    ;incf    cont
+    ;movf    cont, W
+    ;sublw   10
+    ;btfss   STATUS, 2	;Bit zero status
+    ;goto    return_T0	;$+2
+    ;clrf    cont	;500ms
+    ;incf    PORTA
+ ;return_T0:
+    ;return
+    
+  PSECT code, delta=2, abs
+  ORG 100h	;Posición para el código
+ ;------------------ TABLA -----------------------
+  Tabla:
+    clrf  PCLATH
+    bsf   PCLATH,0
+    andlw 0x0F
+    addwf PCL
+    retlw 00111111B          ; 0
+    retlw 00000110B          ; 1
+    retlw 01011011B          ; 2
+    retlw 01001111B          ; 3
+    retlw 01100110B          ; 4
+    retlw 01101101B          ; 5
+    retlw 01111101B          ; 6
+    retlw 00000111B          ; 7
+    retlw 01111111B          ; 8
+    retlw 01101111B          ; 9
+    retlw 01110111B          ; A
+    retlw 01111100B          ; b
+    retlw 00111001B          ; C
+    retlw 01011110B          ; d
+    retlw 01111001B          ; E
+    retlw 01110001B          ; F
+ 
+  ;---------------configuración------------------------------
+  main: 
+    call    config_io	
+    call    config_reloj
+    call    config_IOChange
+    call    config_InterrupEnable  
+    banksel PORTA 
+;----------loop principal---------------------
+ loop: 
+    movf    PORTA,w
+    call    Tabla
+    movwf   PORTC 
+    goto    loop    ;loop forever 
+;------------sub rutinas---------------------
+config_IOChange:
+    banksel TRISA
+    bsf	    IOCB, UP
+    bsf	    IOCB, DOWN 
+    
+    banksel PORTA
+    movf    PORTB, W	;Condición mismatch
+    bcf	    RBIF
+    return
+config_io:
+    bsf	    STATUS, 5   ;banco  11
+    bsf	    STATUS, 6	;Banksel ANSEL
+    clrf    ANSEL	;pines digitales
+    clrf    ANSELH
+    
+    bsf	    STATUS, 5	;banco 01
+    bcf	    STATUS, 6	;Banksel TRISA
+    movlw   0xF0
+    movwf   TRISA	;PORTA A salida
+    clrf    TRISC
+    bsf	    TRISB, UP
+    bsf	    TRISB, DOWN
+    
+    bcf	    OPTION_REG,	7   ;RBPU Enable bit - Habilitar
+    bsf	    WPUB, UP
+    bsf	    WPUB, DOWN
+    
+    bcf	    STATUS, 5	;banco 00
+    bcf	    STATUS, 6	;Banksel PORTA
+    clrf    PORTA	;Valor incial 0 en puerto A
+    clrf    PORTC
+    return
+     
+ ;config_tmr0:
+    ;banksel OPTION_REG   ;Banco de registros asociadas al puerto A
+    ;bcf	    T0CS    ; reloj interno clock selection
+    ;bcf	    PSA	    ;Prescaler 
+    ;bsf	    PS2
+    ;bsf	    PS1
+    ;bsf	    PS0	    ;PS = 111 Tiempo en ejecutar , 256
+    
+    ;reiniciar_Tmr0  ;Macro reiniciar tmr0
+    ;return  
+    
+ config_reloj:
+    banksel OSCCON	;Banco OSCCON 
+    bsf	    IRCF2	;OSCCON configuración bit2 IRCF
+    bsf	    IRCF1	;OSCCON configuracuón bit1 IRCF
+    bcf	    IRCF0	;OSCCON configuración bit0 IRCF
+    bsf	    SCS		;reloj interno , 4Mhz
+    return
+
+config_InterrupEnable:
+    bsf	    GIE		;Habilitar en general las interrupciones, Globales
+    bsf	    RBIE	;Se encuentran en INTCON
+    bcf	    RBIF	;Limpiamos bandera
+    return
+ 
+end
+
+
+
+
+
