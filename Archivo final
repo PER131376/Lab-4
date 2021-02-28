@@ -1,0 +1,207 @@
+;-----------------------Encabezado--------------------------------------------------------
+; Archivo:	        main.s
+; Dispositivo:	        PIC16F887
+; Autor:	        Selvin Peralta 
+; Compilador:	        pic-as (v2.30), MPLABX V5.40
+;                
+; Programa:	        Interrupciones y Pull Ups del Puerto B
+; Hardware:	        LEDs en el puerto A, Display en el puerto C y D
+;                       
+; Creado:               23 feb, 2021
+; Última modificación:  27feb, 2021
+
+;---------------------------------------------------------------------------------------------
+PROCESSOR 16F887
+#include <xc.inc>
+
+; configuración word1
+ CONFIG FOSC=INTRC_NOCLKOUT //Oscilador interno sin salidas
+ CONFIG WDTE=OFF	    //WDT disabled (reinicio repetitivo del pic)
+ CONFIG PWRTE=ON	    //PWRT enabled (espera de 72ms al iniciar
+ CONFIG MCLRE=OFF	    //pin MCLR se utiliza como I/O
+ CONFIG CP=OFF		    //sin protección de código
+ CONFIG CPD=OFF		    //sin protección de datos
+ 
+ CONFIG BOREN=OFF	    //sin reinicio cuando el voltaje baja de 4v
+ CONFIG IESO=OFF	    //Reinicio sin cambio de reloj de interno a externo
+ CONFIG FCMEN=OFF	    //Cambio de reloj externo a interno en caso de falla
+ CONFIG LVP=ON		    //Programación en bajo voltaje permitida
+ 
+;configuración word2
+  CONFIG WRT=OFF	    //Protección de autoescritura 
+  CONFIG BOR4V=BOR40V	    //Reinicio abajo de 4V 
+ UP	EQU 0		    //Variable que utilizamos para definir el pin del Puerto donde estar el push botton
+ DOWN	EQU 7               //Variable que utilizamos para definir el pin del Puerto donde estar el push botton
+	
+reiniciar_TR0 macro	    //
+    banksel TMR0	    //Llammos el registro del TMR0
+    movlw   178             //Valor del registro TMR0
+    movwf   TMR0            //Colocamos 
+    bcf	    T0IF            //Reiniciamos el TMR0 limpiando la bandera T0IF
+    endm
+    
+  PSECT udata_bank0          ;common memory
+    cont:	DS  2        ;2 byte apartado
+    D2:	        DS  1        ;Variable que nos ayudara para la comparacion w en las tablas 
+    
+  PSECT udata_shr ;common memory
+    w_t:	DS  1;1 byte apartado
+    STATUS_T:   DS  1;1 byte
+  
+  PSECT resVect, class=CODE, abs, delta=2
+  ;----------------------vector reset------------------------
+  ORG 00h	;posición 000h para el reset
+  resetVec:
+    PAGESEL main
+    goto main
+    
+  PSECT intVect, class=CODE, abs, delta=2
+  ;----------------------interrupciones de reset------------------------
+  
+  ORG 04h	            ;posición 0004h para interr
+  
+  push:
+    movf    w_t		   ;Guardamos el valor de w en una varaibles temporal 	
+    swapf   STATUS, W      ;Invertimos los valor del STATUS y lo asignamos a w
+    movwf   STATUS_T       ;Guardamos la w anterior a nuestra variable
+    
+  isr:                     ;Etiqueta para poder realizar los siguientes comandos en las interrupciones
+    btfsc   T0IF           ;
+    call    Interr_TR0     ;
+    btfsc   RBIF           ;
+    call    int_PHB        ;
+    
+  pop:
+    swapf   STATUS_T, W     ;
+    movwf   STATUS          ;
+    swapf   w_t, F          ;
+    swapf   w_t, W          ;
+    retfie
+;---------Subrutinas de Interrupción-----------
+  Interr_TR0:
+    reiniciar_TR0	    ;Llamamos la subrutina de reiniciar_TR0
+    incf    cont
+    movf    cont, W
+    sublw   50
+    btfss   STATUS, 2	    ;Bit zero status
+    goto    return_T0	    ;$+2
+    clrf    cont	    ;500ms
+    incf    D2
+ 
+ return_T0:
+    return
+    
+ int_PHB:		  ;Verificacion de los Push Botton 
+    banksel PORTB	  ;Para el llamado del banco del portB
+    btfss   PORTB, UP     ;Verificamos si el Puerto B el pin esta presionado para pasar a la siguiente 
+    incf    PORTA	  ;Si esta presionado incrementa el puerto A
+    btfss   PORTB, DOWN	  ;Verificamos si el el pin DOWN del puerto B esta presionado para pasar a la intruccion 
+    decf    PORTA         ;Si esta presionado decrementa al puerto A
+    bcf	    RBIF          ;Limpiamos la bandera de los push botton
+    return
+    
+  PSECT code, delta=2, abs
+  ORG 100h	          ;Posición para el código
+;-----------------Tabla-----------------------------
+Tabla:
+    clrf  PCLATH	   ;Limbiamos el Banco PCLATH
+    bsf   PCLATH,0         ;Colocamos un 1 al bit 0 del PCLATH
+    andlw 0x0F             ;Hacemos que los 4 valores menos significativos valga para ver los segmentos 
+    addwf PCL              ;Metemos el valor de w a la variable PCL para ver que segmentos encenderiamos 
+    retlw 00111111B        ; 0
+    retlw 00000110B        ; 1
+    retlw 01011011B        ; 2
+    retlw 01001111B        ; 3
+    retlw 01100110B        ; 4
+    retlw 01101101B        ; 5
+    retlw 01111101B        ; 6
+    retlw 00000111B        ; 7
+    retlw 01111111B        ; 8
+    retlw 01101111B        ; 9
+    retlw 01110111B        ; A
+    retlw 01111100B        ; b
+    retlw 00111001B        ; C
+    retlw 01011110B        ; d
+    retlw 01111001B        ; E
+    retlw 01110001B        ; F
+
+  ;---------------configuración------------------------------
+  main: 
+    bsf	    STATUS, 5        ;banco  11
+    bsf	    STATUS, 6	     ;Banksel ANSEL
+    clrf    ANSEL	     ;pines digitales
+    clrf    ANSELH
+    
+    bsf	    STATUS, 5	     ;banco 01
+    bcf	    STATUS, 6	     ;Banksel TRISA
+    movlw   0xF0
+    movwf   TRISA	     ;PORTA A salida
+    clrf    TRISD            ;Limpiamos TRISD
+    clrf    TRISC
+    bsf	    TRISB, UP
+    bsf	    TRISB, DOWN
+    
+    bcf	    OPTION_REG,	7    ;RBPU Enable bit - Habilitar
+    bsf	    WPUB, UP         ;Activacion del Pull-Up para el pin
+    bsf	    WPUB, DOWN       ;Activacion del Pull-Up para el pin 
+    
+
+    bcf	    STATUS, 5	     ;banco 00
+    bcf	    STATUS, 6	     ;Banksel PORTA
+    clrf    PORTA	     ;Valor incial 0 en puerto A
+    clrf    PORTD
+    clrf    PORTC
+    
+    call    config_reloj     ;Llamamos la configuracion del reloj
+    call    config_TR0	     ;Llamamos la configuracion del TR0
+    call    config_IOCB       ;Llamamos la configuracion de los Pull Up del puertoB
+    call    config_Int       ;Lalmamos la configuracion de las interrupciones 
+    banksel PORTA            ;Ir al banco 00
+;----------loop principal---------------------
+ loop: 
+    movf    D2,w             ;Movemos el valor de la variable D2 a w
+    call    Tabla            ;Llamamos a las configutraciones de la tabla 
+    movwf   PORTD	     ;Movemos la literal que comprobamos en la tabla al puertoD
+    
+    movf    PORTA,w          ;Movemos el valor del PuertoA a w
+    call    Tabla            ;Llamamos la configuracion de la tabla 
+    movwf   PORTC            ;Movemos la literal que regresa de la tabla en w al PuertoC
+    
+    goto    loop             ;loop 
+;------------sub rutinas---------------------
+config_IOCB:		
+    banksel TRISA            ;Nos vamos al banco del TRISA
+    bsf	    IOCB, UP         ;Activamos el bit de control de interrupcion de cambio del Puerto B
+    bsf	    IOCB, DOWN	     ;Activamos el bit de control de interrupcion de cambio del Puerto B
+    
+    banksel PORTA            ;Nos vamos al banco 00
+    movf    PORTB, W	     ;Movemos el valor del PuertoB a w
+    bcf	    RBIF             ;Limpiamo la bandera de la interrpcion del PORTB
+    return
+    
+ config_TR0:
+    banksel OPTION_REG       ;Banco de registros asociadas al puerto A
+    bcf	    T0CS             ;reloj interno clock selection
+    bcf	    PSA	             ;Prescaler 
+    bsf	    PS2
+    bsf	    PS1
+    bsf	    PS0	              ;PS = 111 Tiempo en ejecutar , 256
+    
+    reiniciar_TR0             ;Macro reiniciar tmr0
+    return  
+    
+ config_reloj:
+    banksel OSCCON	      ;Nos dirigimos al Banco donde encontramos OSCCON
+    bsf	    IRCF2	      ;OSCCON configuración bit2 IRCF
+    bsf	    IRCF1	      ;OSCCON configuracuón bit1 IRCF
+    bcf	    IRCF0	      ;OSCCON configuración bit0 IRCF
+    bsf	    SCS		      ;Asignamos que tipo de reloj queremos, interno , 4Mhz
+    return
+
+config_Int:
+    bsf	    GIE		      ;Habilitar en general las interrupciones
+    bsf	    T0IE	      ;Habilitamos la interrupcion del timer 
+    bcf	    T0IF	      ;Limpiamos la bandera del timer0
+    return
+ 
+end
